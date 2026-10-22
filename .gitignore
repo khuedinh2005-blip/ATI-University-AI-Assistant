@@ -1,0 +1,16 @@
+# Python & Virtual Environment
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.log
+
+# Environment variables & secrets
+.env
+
+# Vector database storage
+data/chroma_db/
+tests/temp_test_chroma*
+
+# Streamlit temporary files
+.streamlit/
