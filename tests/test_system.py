@@ -136,6 +136,52 @@ class TestUniversityAIAssistant(unittest.TestCase):
         top_source = result["sources"][0]
         self.assertIn("Quy định Chuẩn đầu ra", top_source["title"])
 
+    def test_07_web_scraper_utilities(self):
+        """Test web scraper helper functions: doc ID, category detection, date extraction."""
+        from backend.services.web_scraper import generate_doc_id, detect_category, extract_date
+
+        url = "https://hanu.edu.vn/thong-bao-nha-truong/thong-bao-hoc-phi"
+        doc_id = generate_doc_id(url)
+        self.assertTrue(doc_id.startswith("hanu-web-"))
+        self.assertEqual(len(doc_id), 9 + 12)  # 'hanu-web-' + 12 chars
+
+        # Category detection
+        self.assertEqual(detect_category("Thông báo thu học phí học kỳ 1"), "Tuition")
+        self.assertEqual(detect_category("Xét công nhận tốt nghiệp đợt 2"), "Graduation")
+        self.assertEqual(detect_category("Quy định học vụ và thi lại"), "Regulations")
+        self.assertEqual(detect_category("Thông báo chung về sinh hoạt"), "Announcement")
+
+        # Date extraction
+        self.assertEqual(extract_date("Hà Nội, ngày 15 tháng 08 năm 2026"), "2026-08-15")
+        self.assertEqual(extract_date("Thời hạn: 25/11/2026"), "2026-11-25")
+
+    def test_08_pdf_parser(self):
+        """Test PDF parsing service using PyMuPDF."""
+        try:
+            import fitz
+            from backend.services.pdf_parser import parse_pdf_from_bytes, generate_pdf_doc_id
+
+            # Create an in-memory PDF
+            doc = fitz.open()
+            page = doc.new_page()
+            page.insert_text((50, 72), "Trường Đại học Hà Nội\nThông báo mức thu học phí năm 2026.")
+            pdf_bytes = doc.tobytes()
+            doc.close()
+
+            results = parse_pdf_from_bytes(
+                pdf_bytes=pdf_bytes,
+                metadata={"title": "Thông báo học phí PDF", "category": "Tuition"}
+            )
+            self.assertEqual(len(results), 1)
+            item = results[0]
+            self.assertTrue(item["id"].startswith("hanu-pdf-"))
+            self.assertEqual(item["title"], "Thông báo học phí PDF")
+            self.assertEqual(item["category"], "Tuition")
+            self.assertIn("content_html", item)
+            self.assertIn("Trang 1", item["content_html"])
+        except ImportError:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()

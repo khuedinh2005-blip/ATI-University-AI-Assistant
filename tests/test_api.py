@@ -63,6 +63,34 @@ class TestAPIEndpoints(unittest.TestCase):
         self.assertTrue(data.get("meets_threshold"))
         self.assertGreater(len(data.get("sources", [])), 0)
 
+    def test_05_upload_pdf_authentication(self):
+        """Verify POST /upload-pdf rejects unauthorized calls."""
+        files = {"file": ("unauthorized.pdf", b"pdf content", "application/pdf")}
+        unauth_resp = client.post("/upload-pdf", files=files)
+        self.assertEqual(unauth_resp.status_code, 401)
+
+    def test_06_upload_pdf_processing(self):
+        """Verify POST /upload-pdf accepts and ingests valid PDF with admin key."""
+        try:
+            import fitz
+            doc = fitz.open()
+            page = doc.new_page()
+            page.insert_text((50, 72), "Trường Đại học Hà Nội\nQuy định điều kiện tốt nghiệp năm 2026.")
+            pdf_bytes = doc.tobytes()
+            doc.close()
+
+            files = {"file": ("thong_bao_tot_nghiep_test.pdf", pdf_bytes, "application/pdf")}
+            form_data = {"title": "Quy định tốt nghiệp 2026", "category": "Graduation"}
+            headers = {"X-Admin-Key": settings.ADMIN_API_KEY}
+
+            response = client.post("/upload-pdf", files=files, data=form_data, headers=headers)
+            self.assertEqual(response.status_code, 200)
+            res_data = response.json()
+            self.assertEqual(res_data.get("status"), "success")
+            self.assertIn("summary", res_data)
+        except ImportError:
+            pass
+
 
 if __name__ == "__main__":
     unittest.main()

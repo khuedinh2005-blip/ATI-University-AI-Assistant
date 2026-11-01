@@ -102,7 +102,7 @@ def generate_answer(
         client = genai.Client(api_key=key)
         prompt = build_rag_prompt(question, chunks)
         response = client.models.generate_content(
-            model="gemini-3.5-flash-lite",
+            model="gemini-2.5-flash",
             contents=prompt,
             config={
                 "system_instruction": SYSTEM_PROMPT,

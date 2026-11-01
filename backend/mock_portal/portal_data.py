@@ -3,7 +3,10 @@ Mock Academic Management Portal Data for Hanoi University (HANU).
 Simulates JSON payloads returned by the university's official API endpoint.
 """
 
-from typing import List, Dict, Any
+import logging
+from typing import List, Dict, Any, Set
+
+logger = logging.getLogger(__name__)
 
 MOCK_ANNOUNCEMENTS: List[Dict[str, Any]] = [
     {
@@ -123,7 +126,51 @@ MOCK_ANNOUNCEMENTS: List[Dict[str, Any]] = [
 
 def fetch_portal_announcements() -> List[Dict[str, Any]]:
     """
-    Simulates calling the University Academic Management HTTP API.
-    Returns the list of raw announcement payloads.
+    Fetches announcements by combining live web scraped data from HANU sites
+    with mock portal announcements as fallback and supplement.
+    Deduplicates announcements by id and source_url.
     """
-    return MOCK_ANNOUNCEMENTS
+    web_announcements: List[Dict[str, Any]] = []
+    try:
+        from backend.services.web_scraper import fetch_web_announcements
+        web_announcements = fetch_web_announcements()
+    except Exception as e:
+        logger.warning(f"Could not fetch live web announcements: {e}")
+        web_announcements = []
+
+    if not web_announcements:
+        return list(MOCK_ANNOUNCEMENTS)
+
+    combined: List[Dict[str, Any]] = []
+    seen_ids: Set[str] = set()
+    seen_urls: Set[str] = set()
+
+    # Prioritize live web announcements
+    for doc in web_announcements:
+        doc_id = doc.get("id")
+        url = doc.get("source_url")
+        if doc_id and doc_id in seen_ids:
+            continue
+        if url and url in seen_urls:
+            continue
+        if doc_id:
+            seen_ids.add(doc_id)
+        if url:
+            seen_urls.add(url)
+        combined.append(doc)
+
+    # Supplement with mock announcements
+    for doc in MOCK_ANNOUNCEMENTS:
+        doc_id = doc.get("id")
+        url = doc.get("source_url")
+        if doc_id and doc_id in seen_ids:
+            continue
+        if url and url in seen_urls:
+            continue
+        if doc_id:
+            seen_ids.add(doc_id)
+        if url:
+            seen_urls.add(url)
+        combined.append(doc)
+
+    return combined
