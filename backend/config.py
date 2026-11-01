@@ -15,7 +15,7 @@ class Settings:
     BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8000"))
     CHROMA_PERSIST_DIR: str = os.getenv("CHROMA_PERSIST_DIR", str(BASE_DIR / "data" / "chroma_db"))
     SYNC_INTERVAL_MINUTES: int = int(os.getenv("SYNC_INTERVAL_MINUTES", "30"))
-    SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.58"))
+    SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.30"))
     TOP_K_CHUNKS: int = int(os.getenv("TOP_K_CHUNKS", "20"))
     TOP_N_RERANKED: int = int(os.getenv("TOP_N_RERANKED", "5"))
 

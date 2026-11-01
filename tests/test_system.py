@@ -78,8 +78,8 @@ class TestUniversityAIAssistant(unittest.TestCase):
         self.assertEqual(stats2["new"], 0)
         self.assertEqual(stats2["skipped"], len(raw_docs))
 
-    def test_04_temporal_validity_filtering(self):
-        """Test that expired documents are filtered out as of October 2026."""
+    def test_04_temporal_version_selection(self):
+        """Only older versions are filtered; unique notices remain usable."""
         # Sync knowledge base first
         self.vdb.sync_knowledge_base(fetch_portal_announcements())
 
@@ -99,12 +99,27 @@ class TestUniversityAIAssistant(unittest.TestCase):
         self.assertTrue(meets_threshold)
         self.assertGreater(len(selected), 0)
 
-        # Verify that expired 2025 announcement ('hanu-ann-2025-099') was filtered out!
+        # The older tuition notice is superseded by the 2026 edition.
         selected_ids = [c["metadata"]["doc_id"] for c in selected]
         self.assertNotIn("hanu-ann-2025-099", selected_ids)
 
         expired_ids = [c["metadata"]["doc_id"] for c in expired]
         self.assertIn("hanu-ann-2025-099", expired_ids)
+
+        # The maintenance notice is unique, so its historical date does not
+        # make it disappear from the knowledge base.
+        maintenance_chunks = self.vdb.query_chunks("bảo trì phòng máy nhà C", n_results=10)
+        maintenance_selected, maintenance_expired, _ = rank_and_filter_chunks(
+            chunks=maintenance_chunks,
+            current_date=ref_date,
+            top_n=10,
+            threshold=0.0
+        )
+        maintenance_ids = [c["metadata"]["doc_id"] for c in maintenance_selected]
+        self.assertIn("hanu-ann-2026-005", maintenance_ids)
+        self.assertNotIn("hanu-ann-2026-005", [
+            c["metadata"]["doc_id"] for c in maintenance_expired
+        ])
 
     def test_05_relevance_threshold_fallback(self):
         """Test that completely irrelevant questions do not meet the similarity threshold."""

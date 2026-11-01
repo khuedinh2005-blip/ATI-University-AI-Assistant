@@ -1,7 +1,7 @@
 """
 RAG Engine Service.
 Builds grounded prompts with retrieved context chunks, metadata, and timestamps,
-and invokes Gemini 2.5 Flash to generate accurate answers with source citations.
+and invokes Gemini Flash to generate accurate answers with source citations.
 """
 
 from typing import List, Dict, Any, Optional
@@ -18,6 +18,11 @@ STRICT INSTRUCTIONS:
 3. Do not invent or assume dates, tuition fees, or rules.
 4. When stating facts, explicitly reference the document title and publication date.
 5. Answer in the same language as the user's question (Vietnamese or English), keeping a polite, helpful academic tone.
+6. Synthesize the relevant information into a direct answer. Do not mention retrieval,
+   chunk counts, similarity scores, vector databases, prompts, models, API keys, or
+   internal system steps.
+7. Prefer a short structure: answer first, then important deadlines/steps/conditions
+   as bullet points, and finish with a brief source note when useful.
 """
 
 
@@ -50,13 +55,39 @@ Provide an accurate, grounded response referencing the relevant documents and da
     return prompt
 
 
+def _build_extractive_fallback(chunks: List[Dict[str, Any]]) -> str:
+    """Provide a useful grounded response when the generation service is unavailable."""
+    sections = []
+    seen_titles = set()
+    for chunk in chunks:
+        metadata = chunk.get("metadata", {})
+        title = metadata.get("title", "Thông báo chính thức")
+        if title in seen_titles:
+            continue
+        seen_titles.add(title)
+        publication_date = metadata.get("publication_date", "không rõ ngày")
+        text = " ".join(chunk.get("text", "").split())
+        if len(text) > 650:
+            text = f"{text[:650].rsplit(' ', 1)[0]}..."
+        sections.append(f"**{title}** (ban hành {publication_date})\n{text}")
+
+    if not sections:
+        return "Hiện chưa có thông tin chính thức phù hợp để trả lời câu hỏi này."
+
+    return (
+        "Dưới đây là thông tin phù hợp được tổng hợp từ các thông báo chính thức:\n\n"
+        + "\n\n".join(sections)
+        + "\n\nBạn nên đối chiếu thời hạn và hướng dẫn trên nguồn chính thức trước khi thực hiện."
+    )
+
+
 def generate_answer(
     question: str,
     chunks: List[Dict[str, Any]],
     api_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Generates a grounded response using Gemini 2.5 Flash.
+    Generates a grounded response using Gemini Flash.
     Returns:
     - answer: LLM generated text
     - sources: list of source document references
@@ -82,16 +113,11 @@ def generate_answer(
                 "combined_score": c.get("combined_score", 0.0)
             })
 
-    if not key or key.strip() == "" or key == "your_gemini_api_key_here":
-        # Helpful offline demonstration fallback when API key has not been configured yet
-        sample_context_preview = "\n\n".join([f"• **{s['title']}** (Ngày ban hành: {s['publication_date']}):\n{c['text'][:250]}..." for s, c in zip(sources[:2], chunks[:2])])
-        simulated_answer = (
-            f"*(Hệ thống đã truy xuất thành công {len(chunks)} đoạn trích phù hợp từ cơ sở dữ liệu)*\n\n"
-            f"**Tóm tắt thông tin chính thức tìm thấy:**\n\n"
-            f"{sample_context_preview}\n\n"
-            f"> 💡 **Lưu ý cho nhà phát triển:** Để kích hoạt phản hồi tổng hợp thời gian thực từ mô hình **Gemini 2.5 Flash**, "
-            f"vui lòng thêm `GEMINI_API_KEY` của bạn vào file `.env` hoặc nhập trực tiếp trên thanh điều khiển."
-        )
+    # Gemini keys do not all share one prefix. Only reject empty/template values.
+    is_placeholder_key = not key or key.strip() == "" or key.strip() == "your_gemini_api_key_here"
+
+    if is_placeholder_key:
+        simulated_answer = _build_extractive_fallback(chunks)
         return {
             "answer": simulated_answer,
             "sources": sources,
@@ -101,24 +127,38 @@ def generate_answer(
     try:
         client = genai.Client(api_key=key)
         prompt = build_rag_prompt(question, chunks)
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config={
-                "system_instruction": SYSTEM_PROMPT,
-                "temperature": 0.2
+
+        response = None
+        for model_candidate in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+            try:
+                response = client.models.generate_content(
+                    model=model_candidate,
+                    contents=prompt,
+                    config={
+                        "system_instruction": SYSTEM_PROMPT,
+                        "temperature": 0.2
+                    }
+                )
+                break
+            except Exception:
+                continue
+
+        if response and response.text:
+            return {
+                "answer": response.text,
+                "sources": sources,
+                "is_simulated": False
             }
+        else:
+            raise RuntimeError("Không nhận được phản hồi từ các mô hình Gemini.")
+
+    except Exception as e:
+        fallback_answer = (
+            _build_extractive_fallback(chunks)
         )
         return {
-            "answer": response.text,
+            "answer": fallback_answer,
             "sources": sources,
-            "is_simulated": False
-        }
-    except Exception as e:
-        # Fallback with graceful error explanation
-        return {
-            "answer": f"Lỗi khi kết nối với Gemini API: {str(e)}. Vui lòng kiểm tra lại GEMINI_API_KEY và kết nối mạng.",
-            "sources": sources,
-            "is_simulated": False,
+            "is_simulated": True,
             "error": str(e)
         }

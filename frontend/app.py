@@ -730,6 +730,15 @@ st.markdown("""
 # HELPER FUNCTIONS
 # =========================================================================
 
+try:
+    import markdown_it
+    _md_parser = markdown_it.MarkdownIt()
+    def render_markdown_to_html(text: str) -> str:
+        return _md_parser.render(text)
+except Exception:
+    def render_markdown_to_html(text: str) -> str:
+        return html.escape(text).replace("\n", "<br>")
+
 def render_sources_section(sources: List[Dict[str, Any]], ref_date: date) -> str:
     """Renders the 2-column grid of source cards matching the mockup."""
     if not sources:
@@ -1013,7 +1022,7 @@ with st.sidebar:
         )
         custom_threshold = st.slider(
             "Similarity Threshold:",
-            min_value=0.30,
+            min_value=0.10,
             max_value=0.80,
             value=settings.SIMILARITY_THRESHOLD,
             step=0.02
@@ -1113,20 +1122,8 @@ if st.session_state.active_view == "chat":
                 with col_av:
                     st.markdown('<div class="ai-avatar-circle">AI</div>', unsafe_allow_html=True)
                 with col_body:
-                    st.markdown(f'<div class="ai-card-wrapper">{msg["content"]}</div>', unsafe_allow_html=True)
-
-                    # Telemetry Information Pill
-                    if msg.get("telemetry"):
-                        t = msg["telemetry"]
-                        st.markdown(f"""
-                        <div class="telemetry-pill">
-                            <span>⚡ Scanned: <strong>{t['scanned_chunks']} chunks</strong></span>
-                            <span>•</span>
-                            <span>🎯 Selected: <strong>{t['selected_chunks']} chunks</strong> (Threshold: {t['threshold']})</span>
-                            <span>•</span>
-                            <span>⏳ Filtered: <strong>{t['expired_count']} expired</strong></span>
-                        </div>
-                        """, unsafe_allow_html=True)
+                    rendered_content = render_markdown_to_html(msg["content"])
+                    st.markdown(f'<div class="ai-card-wrapper">{rendered_content}</div>', unsafe_allow_html=True)
 
                     # 2-Column Sources Grid (Mockup Specification)
                     if msg.get("sources"):
@@ -1135,10 +1132,10 @@ if st.session_state.active_view == "chat":
 
                     # Expired Notices Expander
                     if msg.get("expired_sources"):
-                        with st.expander(f"⏳ Filtered out {len(msg['expired_sources'])} expired notices", expanded=False):
+                        with st.expander(f"↻ Replaced by newer notices ({len(msg['expired_sources'])})", expanded=False):
                             for exp in msg["expired_sources"]:
                                 meta = exp.get("metadata", {})
-                                st.markdown(f"- ❌ **{meta.get('title')}** (Expired: `{meta.get('expiration_date')}` | Published: `{meta.get('publication_date')}`)")
+                                st.markdown(f"- **{meta.get('title')}** (Published: `{meta.get('publication_date')}`; an updated notice is being used)")
 
     # 4. Bottom Input Bar & Disclaimer Footer
     chat_input_val = st.chat_input("Ask about tuition, regulations, retakes, curriculum...")

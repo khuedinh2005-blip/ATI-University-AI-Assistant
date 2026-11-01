@@ -1,13 +1,16 @@
 """
 Temporal-Aware Retrieval & Re-ranking Service.
 Implements:
-1. Validity Filtering: Discards chunks where expiration_date < current_date.
+1. Version Filtering: Discards older chunks only when a newer notice covers
+   the same announcement topic.
 2. Recency Re-ranking: Boosts chunks based on publication freshness.
 3. Relevance Threshold Check: Fallback if similarity is too low.
 """
 
 from datetime import datetime, date
 from typing import List, Dict, Any, Tuple
+import re
+import unicodedata
 from backend.config import settings
 
 
@@ -45,6 +48,21 @@ def calculate_recency_boost(pub_date: date, ref_date: date) -> float:
         return 0.0
 
 
+def _content_key(chunk: Dict[str, Any]) -> str:
+        """Build a stable topic key so newer editions supersede older editions."""
+        metadata = chunk.get("metadata", {})
+        title = metadata.get("title", "")
+        normalized = unicodedata.normalize("NFD", title)
+        normalized = "".join(
+            char for char in normalized if unicodedata.category(char) != "Mn"
+        ).lower()
+        normalized = re.sub(r"\([^)]*(?:het han|expired|hết hạn)[^)]*\)", "", normalized)
+        normalized = re.sub(r"\b20\d{2}(?:\s*-\s*20\d{2})?\b", "", normalized)
+        normalized = re.sub(r"\s+", " ", normalized)
+        normalized = re.sub(r"[^a-z0-9]+", " ", normalized).strip()
+        return f"{metadata.get('category', 'General').lower()}:{normalized}"
+
+
 def rank_and_filter_chunks(
     chunks: List[Dict[str, Any]],
     current_date: date = None,
@@ -53,14 +71,16 @@ def rank_and_filter_chunks(
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], bool]:
     """
     Applies the 3-step Temporal-Aware ranking algorithm:
-    1. Filters out chunks where expiration_date < current_date.
+    1. Marks an old chunk as superseded only when a newer chunk covers the
+       same announcement topic. A unique announcement remains usable even if
+       its optional expiration metadata is in the past.
     2. Calculates recency boost and combines with semantic similarity:
        combined_score = (0.85 * semantic_similarity) + recency_boost
     3. Selects top_n chunks and verifies if highest similarity meets threshold.
 
     Returns:
     - selected_chunks: top_n valid, re-ranked chunks
-    - expired_chunks: list of chunks filtered out due to expiration
+    - expired_chunks: list of chunks superseded by a newer announcement
     - meets_threshold: boolean flag indicating if relevance threshold was reached
     """
     if current_date is None:
@@ -73,15 +93,34 @@ def rank_and_filter_chunks(
     valid_chunks = []
     expired_chunks = []
 
-    # Phase 1: Validity Filtering
+    # Phase 1: Supersede only older versions of the same topic. Expiration
+    # metadata alone is not enough to discard a unique official notice.
+    latest_by_key = {}
     for chunk in chunks:
-        metadata = chunk.get("metadata", {})
-        exp_date_str = metadata.get("expiration_date", "")
-        exp_date = parse_date(exp_date_str)
+        key = _content_key(chunk)
+        publication_date = parse_date(chunk.get("metadata", {}).get("publication_date", ""))
+        previous = latest_by_key.get(key)
+        previous_date = parse_date(
+            previous.get("metadata", {}).get("publication_date", "")
+        ) if previous else None
+        if previous is None or (publication_date and (not previous_date or publication_date > previous_date)):
+            latest_by_key[key] = chunk
 
-        if exp_date and exp_date < current_date:
+    for chunk in chunks:
+        key = _content_key(chunk)
+        latest = latest_by_key[key]
+        publication_date = parse_date(
+            chunk.get("metadata", {}).get("publication_date", "")
+        )
+        latest_date = parse_date(
+            latest.get("metadata", {}).get("publication_date", "")
+        )
+
+        if latest is not chunk and publication_date and latest_date and publication_date < latest_date:
             expired_chunk = dict(chunk)
-            expired_chunk["expired_reason"] = f"Expired on {exp_date} (current: {current_date})"
+            expired_chunk["expired_reason"] = (
+                f"Superseded by the newer announcement published on {latest_date}"
+            )
             expired_chunks.append(expired_chunk)
             continue
 
